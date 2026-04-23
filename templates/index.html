@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ title }}</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">PDF Diff Viewer</div>
+      <div class="meta">
+        <span id="docA"></span>
+        <span class="sep">vs</span>
+        <span id="docB"></span>
+      </div>
+      <div class="actions">
+        <button id="reloadBtn">Reload JSON</button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="sidebar">
+        <div class="summary" id="summaryCards"></div>
+
+        <div class="controls">
+          <input id="searchInput" placeholder="Search titles or text" />
+          <select id="statusFilter">
+            <option value="all">All</option>
+            <option value="modified">Modified</option>
+            <option value="renumbering_only">Renumbering only</option>
+            <option value="added">Added</option>
+            <option value="removed">Removed</option>
+            <option value="unchanged">Unchanged</option>
+          </select>
+          <label><input type="checkbox" id="changedOnly" /> Only changed lines</label>
+          <label><input type="checkbox" id="showTitleDiff" checked /> Show title diff</label>
+        </div>
+
+        <div id="diffList" class="diff-list"></div>
+      </aside>
+
+      <section class="viewer">
+        <div class="viewer-header" id="viewerHeader"></div>
+
+        <div class="review-row">
+          <select id="validationStatus">
+            <option value="needs_review">Needs review</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+          </select>
+          <input id="reviewer" placeholder="Reviewer" />
+          <input id="reviewNote" placeholder="Review note" />
+          <button id="saveReviewBtn">Save review</button>
+
+          <select id="classification">
+            <option value="">No class</option>
+            <option value="editorial">Editorial</option>
+            <option value="slight">Slight</option>
+            <option value="significant">Significant</option>
+          </select>
+          <button id="saveClassBtn">Save class</button>
+        </div>
+
+        <div class="panes">
+          <div class="pane" id="leftPane"></div>
+          <div class="pane" id="rightPane"></div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>
