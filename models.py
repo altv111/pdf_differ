@@ -118,6 +118,11 @@ class SectionDiffResult:
     title_diff: Optional[TitleDiff]
     structured_diff: List[StructuredDiffChunk]
     unified_diff: str
+    semantic_status: str
+    semantic_text_a: str
+    semantic_text_b: str
+    semantic_structured_diff: List[StructuredDiffChunk] = field(default_factory=list)
+    semantic_unified_diff: str = ""
     change_classification: Optional[str] = None
     section_lines_a: List[str] = field(default_factory=list)
     section_lines_b: List[str] = field(default_factory=list)

@@ -90,6 +90,8 @@ You can export an existing diff JSON into a 7-column table:
 6. text in file B
 7. diff score
 
+Exporter uses `semantic_text_a` / `semantic_text_b` when available, and falls back to raw section lines otherwise.
+
 ```bash
 python export_table.py bcb765_d595_diff.json --csv bcb765_d595_table.csv
 python export_table.py bcb765_d595_diff.json --excel bcb765_d595_table.xlsx
@@ -110,6 +112,7 @@ A lightweight web viewer is included for side-by-side visual diff review.
 ```bash
 source env/bin/activate
 python viewer_backend.py
+python viewer_backend.py --diff bcb765_d595_diff.json --port 8001
 ```
 
 Then open `http://127.0.0.1:8000`.
@@ -117,6 +120,7 @@ Then open `http://127.0.0.1:8000`.
 ### Viewer features
 
 - Summary cards for modified/added/removed/unchanged
+- Diff-report dropdown (top bar) to switch between available `*.json` reports
 - Filterable/searchable section list
 - Side-by-side diff panes
 - Section-context rendering (each pane shows full `title + section body`)
@@ -196,6 +200,11 @@ Review and classification updates are stored in local SQLite `viewer_state.db`.
       "match_confidence": "matched",
       "low_confidence": false,
       "anchor_type": "named_numbered_heading",
+      "semantic_status": "modified",
+      "semantic_text_a": "...",
+      "semantic_text_b": "...",
+      "semantic_structured_diff": [],
+      "semantic_unified_diff": "--- ...",
       "title_diff": {
         "status": "modified",
         "structured_diff": [
@@ -220,6 +229,9 @@ Review and classification updates are stored in local SQLite `viewer_state.db`.
   ]
 }
 ```
+
+`semantic_*` fields are wrap-insensitive canonical diffs intended for downstream consumers (UI, CSV, future services).  
+Raw `structured_diff` / `unified_diff` are retained for traceability to extraction output.
 
 ## Heuristic Notes
 

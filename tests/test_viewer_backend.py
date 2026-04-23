@@ -5,7 +5,9 @@ from viewer_backend import (
     ReviewStore,
     ReviewUpdateRequest,
     _diff_id,
+    list_available_reports,
     merge_runtime_fields,
+    resolve_report_path,
 )
 
 
@@ -39,3 +41,21 @@ def test_review_and_classification_overlay(tmp_path: Path) -> None:
     merged = merge_runtime_fields(store, [diff])
     assert merged[0]["human_review"]["validation_status"] == "approved"
     assert merged[0]["change_classification"] == "slight"
+
+
+def test_list_available_reports(tmp_path: Path) -> None:
+    (tmp_path / "a.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "b.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "notes.txt").write_text("x", encoding="utf-8")
+    reports = list_available_reports(tmp_path)
+    assert reports == ["a.json", "b.json"]
+
+
+def test_resolve_report_path_allows_local_json(tmp_path: Path) -> None:
+    current = tmp_path / "a.json"
+    current.write_text("{}", encoding="utf-8")
+    target = tmp_path / "b.json"
+    target.write_text("{}", encoding="utf-8")
+
+    resolved = resolve_report_path(tmp_path, "b.json", current)
+    assert resolved == target.resolve()

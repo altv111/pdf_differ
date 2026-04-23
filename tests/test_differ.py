@@ -83,3 +83,30 @@ def test_diff_propagates_low_confidence_match_flag() -> None:
     diff = report.diffs[0]
     assert diff.match_confidence == "low-confidence matched"
     assert diff.low_confidence is True
+
+
+def test_semantic_status_ignores_soft_wrap_shift() -> None:
+    a_sec = _section(
+        "a1",
+        "Principle 11: Banks must have information systems and analytical techniques that",
+        [
+            "enable management to measure the credit risk inherent in all on- and off-balance sheet",
+            "activities.",
+        ],
+    )
+    b_sec = _section(
+        "b1",
+        "Principle 11: Banks must have information systems and analytical techniques that enable",
+        [
+            "management to measure the credit risk inherent in all on- and off-balance sheet activities.",
+        ],
+    )
+    doc_a = DocumentSections(document="a.pdf", sections=[a_sec])
+    doc_b = DocumentSections(document="b.pdf", sections=[b_sec])
+    matches = [SectionMatch(section_id_a="a1", section_id_b="b1", score=0.95, confidence="matched", reason="")]
+
+    report = SectionDiffer().build_report(doc_a, doc_b, matches)
+    diff = report.diffs[0]
+    assert diff.semantic_status == "unchanged"
+    assert diff.semantic_text_a
+    assert diff.semantic_text_b

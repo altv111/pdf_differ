@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import argparse
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -43,6 +44,12 @@ class ClassificationUpdateRequest(BaseModel):
 
     classification: Optional[str] = Field(default=None, pattern=r"^(editorial|slight|significant)?$")
     source: str = "manual"
+
+
+class ReloadRequest(BaseModel):
+    """Optional request body for reloading/switching the active diff JSON."""
+
+    path: Optional[str] = None
 
 
 class ReviewStore:
@@ -142,6 +149,34 @@ def load_report(path: Path) -> Dict[str, Any]:
         return json.load(f)
 
 
+def list_available_reports(base_dir: Path) -> List[str]:
+    """List JSON report candidates in a directory."""
+
+    return sorted(p.name for p in base_dir.glob("*.json") if p.is_file())
+
+
+def resolve_report_path(base_dir: Path, requested: str | None, current: Path) -> Path:
+    """
+    Resolve a user-requested report path safely under the report directory.
+
+    Allows file-name selection from the dropdown without permitting traversal
+    outside `base_dir`.
+    """
+
+    if not requested:
+        return current
+
+    candidate = Path(requested)
+    candidate = candidate if candidate.is_absolute() else (base_dir / candidate)
+    candidate = candidate.resolve()
+    base_resolved = base_dir.resolve()
+    if base_resolved not in candidate.parents and candidate != base_resolved:
+        raise FileNotFoundError("Requested report path is outside allowed directory")
+    if not candidate.exists() or candidate.suffix.lower() != ".json":
+        raise FileNotFoundError(f"Requested report not found: {candidate}")
+    return candidate
+
+
 def _diff_id(diff: Dict[str, Any], idx: int) -> str:
     """Build deterministic UI id for a diff row."""
 
@@ -197,6 +232,7 @@ def create_app(diff_path: Path = DEFAULT_DIFF_PATH, db_path: Path = DB_PATH) -> 
     resolved_db_path = db_path if db_path.is_absolute() else BASE_DIR / db_path
     context = DiffContext(path=resolved_diff_path, report=load_report(resolved_diff_path))
     store = ReviewStore(resolved_db_path)
+    reports_dir = context.path.parent
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
@@ -218,6 +254,14 @@ def create_app(diff_path: Path = DEFAULT_DIFF_PATH, db_path: Path = DB_PATH) -> 
             "pdf_b": context.report.get("pdf_b"),
             "summary": context.report.get("summary", {}),
             "diffs": diffs,
+            "diff_file": context.path.name,
+        }
+
+    @app.get("/api/reports")
+    async def get_reports() -> Dict[str, Any]:
+        return {
+            "current": context.path.name,
+            "reports": list_available_reports(reports_dir),
         }
 
     @app.get("/api/diffs/{diff_id}")
@@ -243,10 +287,13 @@ def create_app(diff_path: Path = DEFAULT_DIFF_PATH, db_path: Path = DB_PATH) -> 
         }
 
     @app.post("/api/reload")
-    async def reload_report() -> Dict[str, Any]:
+    async def reload_report(payload: Optional[ReloadRequest] = None) -> Dict[str, Any]:
+        requested = payload.path if payload else None
+        context.path = resolve_report_path(reports_dir, requested, context.path)
         context.report = load_report(context.path)
         return {
             "ok": True,
+            "diff_file": context.path.name,
             "summary": context.report.get("summary", {}),
             "count": len(context.report.get("diffs", [])),
         }
@@ -261,8 +308,16 @@ def main() -> None:
     """Local development server entrypoint."""
 
     import uvicorn
+    parser = argparse.ArgumentParser(description="Run PDF diff review web viewer")
+    parser.add_argument("--diff", type=str, default=str(DEFAULT_DIFF_PATH), help="Diff JSON file to load at startup")
+    parser.add_argument("--db", type=str, default=str(DB_PATH), help="SQLite state DB path")
+    parser.add_argument("--host", type=str, default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--no-reload", action="store_true", help="Disable auto-reload mode")
+    args = parser.parse_args()
 
-    uvicorn.run("viewer_backend:app", host="127.0.0.1", port=8000, reload=True)
+    app_instance = create_app(diff_path=Path(args.diff), db_path=Path(args.db))
+    uvicorn.run(app_instance, host=args.host, port=args.port, reload=not args.no_reload)
 
 
 if __name__ == "__main__":

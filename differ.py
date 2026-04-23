@@ -97,6 +97,21 @@ class SectionDiffer:
         section_lines_a = [a.title, *a.body_lines]
         section_lines_b = [b.title, *b.body_lines]
         section_chunks = self._structured_diff(section_lines_a, section_lines_b, include_equal=True)
+        semantic_text_a = self._semanticize_section_text(a.title, a.body_lines)
+        semantic_text_b = self._semanticize_section_text(b.title, b.body_lines)
+        semantic_same = normalize_body(semantic_text_a) == normalize_body(semantic_text_b)
+        semantic_units_a = self._semantic_units(semantic_text_a)
+        semantic_units_b = self._semantic_units(semantic_text_b)
+        semantic_chunks = self._structured_diff(semantic_units_a, semantic_units_b, include_equal=True)
+        semantic_unified = "\n".join(
+            difflib.unified_diff(
+                semantic_units_a,
+                semantic_units_b,
+                fromfile=f"{a.section_id}:semantic_old",
+                tofile=f"{b.section_id}:semantic_new",
+                lineterm="",
+            )
+        )
         unified = "\n".join(
             difflib.unified_diff(
                 a.body.splitlines(),
@@ -122,6 +137,13 @@ class SectionDiffer:
             unified_diff=title_unified,
         )
 
+        if semantic_same:
+            semantic_status = "unchanged"
+        elif renumber_only:
+            semantic_status = "renumbering_only"
+        else:
+            semantic_status = "modified"
+
         classification = None
         if self.change_classifier and status == "modified":
             classification = self.change_classifier(a.body, b.body)
@@ -143,6 +165,11 @@ class SectionDiffer:
             title_diff=title_diff,
             structured_diff=chunks,
             unified_diff=unified,
+            semantic_status=semantic_status,
+            semantic_text_a=semantic_text_a,
+            semantic_text_b=semantic_text_b,
+            semantic_structured_diff=semantic_chunks,
+            semantic_unified_diff=semantic_unified,
             change_classification=classification,
             section_lines_a=section_lines_a,
             section_lines_b=section_lines_b,
@@ -161,10 +188,34 @@ class SectionDiffer:
         section_lines_b = [b.title, *b.body_lines] if b else []
         if a and not b:
             section_structured = [StructuredDiffChunk(tag="delete", lines_a=section_lines_a, lines_b=[])]
+            semantic_text_a = self._semanticize_section_text(a.title, a.body_lines)
+            semantic_text_b = ""
+            semantic_structured = [
+                StructuredDiffChunk(
+                    tag="delete",
+                    lines_a=self._semantic_units(semantic_text_a),
+                    lines_b=[],
+                )
+            ]
+            semantic_status = "removed"
         elif b and not a:
             section_structured = [StructuredDiffChunk(tag="insert", lines_a=[], lines_b=section_lines_b)]
+            semantic_text_a = ""
+            semantic_text_b = self._semanticize_section_text(b.title, b.body_lines)
+            semantic_structured = [
+                StructuredDiffChunk(
+                    tag="insert",
+                    lines_a=[],
+                    lines_b=self._semantic_units(semantic_text_b),
+                )
+            ]
+            semantic_status = "added"
         else:
             section_structured = []
+            semantic_text_a = ""
+            semantic_text_b = ""
+            semantic_structured = []
+            semantic_status = status
 
         return SectionDiffResult(
             status=status,
@@ -183,6 +234,11 @@ class SectionDiffer:
             title_diff=None,
             structured_diff=[],
             unified_diff="",
+            semantic_status=semantic_status,
+            semantic_text_a=semantic_text_a,
+            semantic_text_b=semantic_text_b,
+            semantic_structured_diff=semantic_structured,
+            semantic_unified_diff="",
             change_classification=None,
             section_lines_a=section_lines_a,
             section_lines_b=section_lines_b,
@@ -231,3 +287,58 @@ class SectionDiffer:
         if normalize_title(title_a) == normalize_title(title_b):
             return False
         return self._title_core(title_a) == self._title_core(title_b)
+
+    @staticmethod
+    def _semanticize_section_text(title: str, body_lines: List[str]) -> str:
+        """
+        Build wrap-insensitive section text for canonical comparison/export.
+
+        Heuristic: join soft-wrapped lines into continuous prose while preserving
+        stronger boundaries created by terminal punctuation.
+        """
+
+        lines = [title, *body_lines]
+        cleaned = [line.strip() for line in lines if line.strip()]
+        if not cleaned:
+            return ""
+
+        out: List[str] = [cleaned[0]]
+        for line in cleaned[1:]:
+            prev = out[-1]
+            if SectionDiffer._looks_like_soft_wrap(prev, line):
+                out[-1] = f"{prev} {line}"
+            else:
+                out.append(line)
+        return "\n".join(out)
+
+    @staticmethod
+    def _looks_like_soft_wrap(prev_line: str, current_line: str) -> bool:
+        """Return True when `current_line` likely continues the previous wrapped line."""
+
+        prev = prev_line.strip()
+        curr = current_line.strip()
+        if not prev or not curr:
+            return False
+        if re.search(r"[.?!:;]$", prev):
+            return False
+        if re.match(r"^\d+[.)]\s+", curr):
+            return False
+        if re.match(r"^[A-Z][A-Z0-9\s-]{3,}$", curr):
+            return False
+        # Prefer merging when next line begins lower-case / punctuation continuation.
+        if re.match(r"^[a-z(,;]", curr):
+            return True
+        # Also merge when previous line ends with connector word.
+        if re.search(r"\b(and|or|to|of|in|for|with|on|at|by|from|under|within)$", prev, flags=re.IGNORECASE):
+            return True
+        return False
+
+    @staticmethod
+    def _semantic_units(text: str) -> List[str]:
+        """Split semantic text into stable sentence-like units for chunk diffing."""
+
+        if not text:
+            return []
+        units = re.split(r"(?<=[.?!])\s+", text.replace("\n", " "))
+        units = [u.strip() for u in units if u.strip()]
+        return units or [text.strip()]

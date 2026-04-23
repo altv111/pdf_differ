@@ -38,6 +38,12 @@ body {
   z-index: 10;
 }
 
+.actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
 .brand {
   font-weight: 700;
   letter-spacing: 0.02em;

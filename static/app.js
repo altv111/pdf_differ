@@ -3,6 +3,7 @@ let state = {
   diffs: [],
   filtered: [],
   selectedId: null,
+  reports: [],
 };
 
 function escapeHtml(s) {
@@ -36,22 +37,36 @@ async function fetchDiffs() {
   updateDocMeta();
 }
 
+async function fetchReports() {
+  const res = await fetch("/api/reports");
+  if (!res.ok) throw new Error("Failed to fetch report list");
+  const payload = await res.json();
+  state.reports = payload.reports || [];
+  const select = document.getElementById("reportSelect");
+  select.innerHTML = state.reports
+    .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+    .join("");
+  if (payload.current) {
+    select.value = payload.current;
+  }
+}
+
 function updateDocMeta() {
   document.getElementById("docA").textContent = state.payload?.pdf_a || "";
   document.getElementById("docB").textContent = state.payload?.pdf_b || "";
 }
 
 function renderSummary() {
-  const summary = state.payload?.summary || {};
-  const renumbering = state.diffs.filter((d) => d.status === "renumbering_only").length;
+  const statuses = state.diffs.map((d) => d.semantic_status || d.status);
+  const count = (name) => statuses.filter((s) => s === name).length;
   const el = document.getElementById("summaryCards");
   el.innerHTML = [
-    summaryCard("Modified", summary.modified || 0),
-    summaryCard("Unchanged", summary.unchanged || 0),
-    summaryCard("Added", summary.added || 0),
-    summaryCard("Removed", summary.removed || 0),
-    summaryCard("Renumbered", renumbering),
-    summaryCard("A / B", `${summary.total_sections_a || 0} / ${summary.total_sections_b || 0}`),
+    summaryCard("Modified", count("modified")),
+    summaryCard("Unchanged", count("unchanged")),
+    summaryCard("Added", count("added")),
+    summaryCard("Removed", count("removed")),
+    summaryCard("Renumbered", count("renumbering_only")),
+    summaryCard("A / B", `${state.payload?.summary?.total_sections_a || 0} / ${state.payload?.summary?.total_sections_b || 0}`),
   ].join("");
 }
 
@@ -60,9 +75,10 @@ function applyFilters() {
   const q = document.getElementById("searchInput").value.trim().toLowerCase();
 
   state.filtered = state.diffs.filter((d) => {
-    if (statusFilter !== "all" && d.status !== statusFilter) return false;
+    const effectiveStatus = d.semantic_status || d.status;
+    if (statusFilter !== "all" && effectiveStatus !== statusFilter) return false;
     if (!q) return true;
-    const hay = `${d.title_a || ""} ${d.title_b || ""} ${(d.unified_diff || "").slice(0, 1000)}`.toLowerCase();
+    const hay = `${d.title_a || ""} ${d.title_b || ""} ${(d.semantic_unified_diff || d.unified_diff || "").slice(0, 1000)}`.toLowerCase();
     return hay.includes(q);
   });
 
@@ -78,13 +94,14 @@ function renderList() {
   const list = document.getElementById("diffList");
   list.innerHTML = state.filtered
     .map((d) => {
+      const effectiveStatus = d.semantic_status || d.status;
       const active = d.diff_id === state.selectedId ? "active" : "";
       const score = d.match_score != null ? ` | score ${Number(d.match_score).toFixed(3)}` : "";
       const classBadge = d.change_classification ? ` <span class="small">class ${escapeHtml(d.change_classification)}</span>` : "";
       const lowConf = d.low_confidence ? ` <span class="small">low-confidence</span>` : "";
       return `
       <div class="list-item ${active}" data-id="${escapeHtml(d.diff_id)}">
-        <div><span class="badge ${getStatusClass(d.status)}">${escapeHtml(d.status)}</span>${classBadge}${lowConf}</div>
+        <div><span class="badge ${getStatusClass(effectiveStatus)}">${escapeHtml(effectiveStatus)}</span>${classBadge}${lowConf}</div>
         <div>${escapeHtml(d.title_b || d.title_a || "(untitled)")}</div>
         <div class="small">${escapeHtml(d.anchor_type || "")} ${score}</div>
       </div>`;
@@ -240,9 +257,10 @@ function renderSelected() {
     rightPane.innerHTML = "";
     return;
   }
+  const effectiveStatus = diff.semantic_status || diff.status;
 
   header.innerHTML = `
-    <div><span class="badge ${getStatusClass(diff.status)}">${escapeHtml(diff.status)}</span>
+    <div><span class="badge ${getStatusClass(effectiveStatus)}">${escapeHtml(effectiveStatus)}</span>
       <strong>${escapeHtml(diff.title_b || diff.title_a || "(untitled)")}</strong></div>
     <div class="small">anchor ${escapeHtml(diff.anchor_type || "")} | score ${escapeHtml(String(diff.match_score || 0))} (${escapeHtml(diff.match_confidence || "n/a")}) | pages ${escapeHtml(String(diff.page_no_in_a || "-"))} / ${escapeHtml(String(diff.page_no_in_b || "-"))}</div>
     <div class="small">classification: ${escapeHtml(diff.change_classification || "none")} | review: ${escapeHtml(diff.human_review?.validation_status || "needs_review")}</div>
@@ -256,7 +274,7 @@ function renderSelected() {
   const showTitle = document.getElementById("showTitleDiff").checked;
   const changedOnly = document.getElementById("changedOnly").checked;
 
-  const sectionChunks = diff.section_structured_diff || [];
+  const sectionChunks = diff.semantic_structured_diff || diff.section_structured_diff || [];
   let leftHtml = "";
   let rightHtml = "";
 
@@ -338,11 +356,17 @@ function bindEvents() {
   document.getElementById("saveClassBtn").addEventListener("click", () => saveClassification().catch(alert));
 
   document.getElementById("reloadBtn").addEventListener("click", async () => {
-    const res = await fetch("/api/reload", { method: "POST" });
+    const selected = document.getElementById("reportSelect").value || null;
+    const res = await fetch("/api/reload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: selected }),
+    });
     if (!res.ok) {
       alert("Reload failed");
       return;
     }
+    await fetchReports();
     await fetchDiffs();
   });
 
@@ -368,6 +392,7 @@ function bindEvents() {
 (async function init() {
   bindEvents();
   try {
+    await fetchReports();
     await fetchDiffs();
   } catch (err) {
     console.error(err);

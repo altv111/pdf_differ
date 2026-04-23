@@ -31,6 +31,11 @@ def extract_section_number(title: str | None, section_id: str | None) -> str:
 def section_text(diff_item: Dict[str, Any], side: str) -> str:
     """Return full section text (title + body) for one side."""
 
+    semantic_key = "semantic_text_a" if side == "a" else "semantic_text_b"
+    semantic = diff_item.get(semantic_key)
+    if isinstance(semantic, str) and semantic.strip():
+        return semantic
+
     title_key = "title_a" if side == "a" else "title_b"
     lines_key = "section_lines_a" if side == "a" else "section_lines_b"
 

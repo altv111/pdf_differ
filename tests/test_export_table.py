@@ -34,3 +34,25 @@ def test_build_rows_minimal() -> None:
     assert r["section_number_file_b"] == "5"
     assert "Body B" in r["text_file_b"]
     assert r["diff_score"] == 0.987
+
+
+def test_build_rows_prefers_semantic_text() -> None:
+    report = {
+        "diffs": [
+            {
+                "page_no_in_a": 1,
+                "section_id_a": "s001",
+                "title_a": "X",
+                "section_lines_a": ["X", "raw A"],
+                "semantic_text_a": "semantic A",
+                "page_no_in_b": 2,
+                "section_id_b": "s002",
+                "title_b": "Y",
+                "section_lines_b": ["Y", "raw B"],
+                "semantic_text_b": "semantic B",
+            }
+        ]
+    }
+    rows = build_rows(report)
+    assert rows[0]["text_file_a"] == "semantic A"
+    assert rows[0]["text_file_b"] == "semantic B"
