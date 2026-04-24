@@ -5,8 +5,10 @@ from viewer_backend import (
     ReviewStore,
     ReviewUpdateRequest,
     _diff_id,
+    list_available_csvs,
     list_available_reports,
     merge_runtime_fields,
+    resolve_csv_path,
     resolve_report_path,
 )
 
@@ -59,3 +61,17 @@ def test_resolve_report_path_allows_local_json(tmp_path: Path) -> None:
 
     resolved = resolve_report_path(tmp_path, "b.json", current)
     assert resolved == target.resolve()
+
+
+def test_list_available_csvs(tmp_path: Path) -> None:
+    (tmp_path / "x.csv").write_text("a,b", encoding="utf-8")
+    (tmp_path / "y.csv").write_text("a,b", encoding="utf-8")
+    (tmp_path / "not.csv.json").write_text("{}", encoding="utf-8")
+    assert list_available_csvs(tmp_path) == ["x.csv", "y.csv"]
+
+
+def test_resolve_csv_path_allows_local_csv(tmp_path: Path) -> None:
+    csv_path = tmp_path / "out.csv"
+    csv_path.write_text("h1,h2", encoding="utf-8")
+    resolved = resolve_csv_path(tmp_path, "out.csv")
+    assert resolved == csv_path.resolve()

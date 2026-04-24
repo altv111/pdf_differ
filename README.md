@@ -121,6 +121,7 @@ Then open `http://127.0.0.1:8000`.
 
 - Summary cards for modified/added/removed/unchanged
 - Diff-report dropdown (top bar) to switch between available `*.json` reports
+- CSV dropdown + download button (top bar) to fetch generated `*.csv` exports
 - Filterable/searchable section list
 - Side-by-side diff panes
 - Section-context rendering (each pane shows full `title + section body`)

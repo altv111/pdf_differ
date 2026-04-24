@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import argparse
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -12,6 +13,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -21,6 +23,8 @@ from starlette.requests import Request
 DEFAULT_DIFF_PATH = Path("d591_d595_diff.json")
 DB_PATH = Path("viewer_state.db")
 BASE_DIR = Path(__file__).resolve().parent
+ENV_DIFF_PATH = "PDF_DIFFER_DIFF_PATH"
+ENV_DB_PATH = "PDF_DIFFER_DB_PATH"
 
 
 @dataclass
@@ -155,6 +159,12 @@ def list_available_reports(base_dir: Path) -> List[str]:
     return sorted(p.name for p in base_dir.glob("*.json") if p.is_file())
 
 
+def list_available_csvs(base_dir: Path) -> List[str]:
+    """List CSV exports available for download in a directory."""
+
+    return sorted(p.name for p in base_dir.glob("*.csv") if p.is_file())
+
+
 def resolve_report_path(base_dir: Path, requested: str | None, current: Path) -> Path:
     """
     Resolve a user-requested report path safely under the report directory.
@@ -174,6 +184,18 @@ def resolve_report_path(base_dir: Path, requested: str | None, current: Path) ->
         raise FileNotFoundError("Requested report path is outside allowed directory")
     if not candidate.exists() or candidate.suffix.lower() != ".json":
         raise FileNotFoundError(f"Requested report not found: {candidate}")
+    return candidate
+
+
+def resolve_csv_path(base_dir: Path, requested: str) -> Path:
+    """Resolve a CSV download path safely under the report directory."""
+
+    candidate = (base_dir / requested).resolve()
+    base_resolved = base_dir.resolve()
+    if base_resolved not in candidate.parents and candidate != base_resolved:
+        raise FileNotFoundError("Requested CSV path is outside allowed directory")
+    if not candidate.exists() or candidate.suffix.lower() != ".csv":
+        raise FileNotFoundError(f"Requested CSV not found: {candidate}")
     return candidate
 
 
@@ -264,6 +286,20 @@ def create_app(diff_path: Path = DEFAULT_DIFF_PATH, db_path: Path = DB_PATH) -> 
             "reports": list_available_reports(reports_dir),
         }
 
+    @app.get("/api/csvs")
+    async def get_csvs() -> Dict[str, Any]:
+        return {
+            "csvs": list_available_csvs(reports_dir),
+        }
+
+    @app.get("/api/csvs/download")
+    async def download_csv(name: str) -> FileResponse:
+        try:
+            csv_path = resolve_csv_path(reports_dir, name)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return FileResponse(path=csv_path, media_type="text/csv", filename=csv_path.name)
+
     @app.get("/api/diffs/{diff_id}")
     async def get_diff_by_id(diff_id: str) -> Dict[str, Any]:
         diffs = merge_runtime_fields(store, context.report.get("diffs", []))
@@ -301,7 +337,15 @@ def create_app(diff_path: Path = DEFAULT_DIFF_PATH, db_path: Path = DB_PATH) -> 
     return app
 
 
-app = create_app()
+def build_app_from_env() -> FastAPI:
+    """App factory used by uvicorn reload mode."""
+
+    diff_path = Path(os.environ.get(ENV_DIFF_PATH, str(DEFAULT_DIFF_PATH)))
+    db_path = Path(os.environ.get(ENV_DB_PATH, str(DB_PATH)))
+    return create_app(diff_path=diff_path, db_path=db_path)
+
+
+app = build_app_from_env()
 
 
 def main() -> None:
@@ -316,8 +360,20 @@ def main() -> None:
     parser.add_argument("--no-reload", action="store_true", help="Disable auto-reload mode")
     args = parser.parse_args()
 
-    app_instance = create_app(diff_path=Path(args.diff), db_path=Path(args.db))
-    uvicorn.run(app_instance, host=args.host, port=args.port, reload=not args.no_reload)
+    os.environ[ENV_DIFF_PATH] = args.diff
+    os.environ[ENV_DB_PATH] = args.db
+
+    if args.no_reload:
+        app_instance = create_app(diff_path=Path(args.diff), db_path=Path(args.db))
+        uvicorn.run(app_instance, host=args.host, port=args.port, reload=False)
+    else:
+        uvicorn.run(
+            "viewer_backend:build_app_from_env",
+            host=args.host,
+            port=args.port,
+            reload=True,
+            factory=True,
+        )
 
 
 if __name__ == "__main__":

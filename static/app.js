@@ -4,6 +4,7 @@ let state = {
   filtered: [],
   selectedId: null,
   reports: [],
+  csvs: [],
 };
 
 function escapeHtml(s) {
@@ -49,6 +50,17 @@ async function fetchReports() {
   if (payload.current) {
     select.value = payload.current;
   }
+}
+
+async function fetchCsvs() {
+  const res = await fetch("/api/csvs");
+  if (!res.ok) throw new Error("Failed to fetch CSV list");
+  const payload = await res.json();
+  state.csvs = payload.csvs || [];
+  const select = document.getElementById("csvSelect");
+  select.innerHTML = state.csvs
+    .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+    .join("");
 }
 
 function updateDocMeta() {
@@ -367,7 +379,17 @@ function bindEvents() {
       return;
     }
     await fetchReports();
+    await fetchCsvs();
     await fetchDiffs();
+  });
+
+  document.getElementById("downloadCsvBtn").addEventListener("click", () => {
+    const selected = document.getElementById("csvSelect").value;
+    if (!selected) {
+      alert("No CSV file available");
+      return;
+    }
+    window.location.href = `/api/csvs/download?name=${encodeURIComponent(selected)}`;
   });
 
   document.addEventListener("keydown", (ev) => {
@@ -393,6 +415,7 @@ function bindEvents() {
   bindEvents();
   try {
     await fetchReports();
+    await fetchCsvs();
     await fetchDiffs();
   } catch (err) {
     console.error(err);
