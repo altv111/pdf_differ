@@ -103,6 +103,100 @@ Excel export requires `openpyxl`:
 pip install openpyxl
 ```
 
+## Hybrid Change Classifier
+
+The project includes a separate, production-oriented hybrid classification module:
+
+- [classifier.py](/home/alpha/pdf/classifier.py)
+- [llm_client.py](/home/alpha/pdf/llm_client.py)
+
+It classifies section diffs as:
+
+- `editorial`
+- `slight`
+- `significant`
+
+### Inputs
+
+Per section payload:
+
+- `section_title`
+- `before_text`
+- `after_text`
+- optional metadata (`diff_score`, etc.)
+
+### Outputs (per section)
+
+- `features`
+- `rule_classification`
+- `llm_classification` (stubbed)
+- `hard_signal_flags`
+- `disagreement_flag`
+- `override_candidate`
+- `final_classification` (currently follows LLM label)
+
+### Example
+
+```python
+import json
+from pathlib import Path
+from classifier import classify_diff_report
+
+report = json.loads(Path("bcb765_d595_diff.json").read_text(encoding="utf-8"))
+classified = classify_diff_report(report)
+print(classified["summary"])
+```
+
+### CLI wrapper
+
+```bash
+python classify_report.py bcb765_d595_diff.json --output bcb765_d595_classified.json
+```
+
+Viewer bridge behavior:
+
+- If `*_classified.json` exists next to the active diff JSON, the viewer auto-loads those labels.
+- If classified output is missing, viewer continues normally (no failure).
+- Optional durable import into `viewer_state.db`:
+
+```bash
+python import_classifications.py bcb765_d595_diff.json bcb765_d595_classified.json --db viewer_state.db
+```
+
+### `.env` support for `llm_client.py`
+
+`llm_client.py` automatically loads a top-level `.env` file in the project root.
+Copy `.env.example` to `.env` and set values as needed:
+
+```bash
+cp .env.example .env
+```
+
+Supported keys:
+
+- `LLM_PROVIDER`
+- `LLM_MODEL`
+- `OPENAI_API_KEY`
+- `ANTHROPIC_API_KEY`
+- `LLM_ENABLE_REAL_CALLS` (`true`/`false`, default `false`)
+- `OPENAI_API_BASE` (optional, default `https://api.openai.com/v1`)
+- `LLM_TIMEOUT_SECONDS` (optional, default `25`)
+- `LLM_RETRIES` (optional, default `2`)
+
+### Real OpenAI mode (optional)
+
+By default, classifier uses a deterministic stub.  
+To enable real OpenAI classification calls in `llm_client.py`, set:
+
+```env
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-5.4
+OPENAI_API_KEY=...
+LLM_ENABLE_REAL_CALLS=true
+```
+
+If API calls fail, classification safely falls back to stub output so pipeline execution does not break.
+
 ## Web Diff Viewer
 
 A lightweight web viewer is included for side-by-side visual diff review.

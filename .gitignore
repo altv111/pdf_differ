@@ -26,6 +26,7 @@ dist/
 .DS_Store
 .vscode/
 .idea/
+.env
 .codex
 
 # Generated JSON outputs

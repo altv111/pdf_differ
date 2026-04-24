@@ -56,6 +56,12 @@ class ReloadRequest(BaseModel):
     path: Optional[str] = None
 
 
+class ClassificationImportRequest(BaseModel):
+    """Optional request body for loading a classified-report JSON file."""
+
+    path: Optional[str] = None
+
+
 class ReviewStore:
     """SQLite-backed persistence for review and classification annotations."""
 
@@ -165,6 +171,49 @@ def list_available_csvs(base_dir: Path) -> List[str]:
     return sorted(p.name for p in base_dir.glob("*.csv") if p.is_file())
 
 
+def _classification_candidate_paths(diff_report_path: Path) -> List[Path]:
+    """Build likely classified-report file paths for a given diff report path."""
+
+    stem = diff_report_path.stem
+    candidates: List[Path] = []
+    if "_diff" in stem:
+        candidates.append(diff_report_path.with_name(stem.replace("_diff", "_classified") + ".json"))
+    candidates.append(diff_report_path.with_name(stem + "_classified.json"))
+    # Deduplicate while preserving order
+    seen = set()
+    unique: List[Path] = []
+    for c in candidates:
+        if c not in seen:
+            unique.append(c)
+            seen.add(c)
+    return unique
+
+
+def load_external_classifications(path: Path) -> Dict[str, str]:
+    """Load section_id -> final_classification mapping from classified report JSON."""
+
+    if not path.exists():
+        return {}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    out: Dict[str, str] = {}
+    for row in payload.get("classifications", []):
+        sid = row.get("section_id")
+        label = row.get("final_classification")
+        if sid and label:
+            out[str(sid)] = str(label)
+    return out
+
+
+def discover_external_classifications(diff_report_path: Path) -> tuple[Dict[str, str], Optional[Path]]:
+    """Find and load first available classified-report sibling; return empty mapping if none."""
+
+    for candidate in _classification_candidate_paths(diff_report_path):
+        data = load_external_classifications(candidate)
+        if data:
+            return data, candidate
+    return {}, None
+
+
 def resolve_report_path(base_dir: Path, requested: str | None, current: Path) -> Path:
     """
     Resolve a user-requested report path safely under the report directory.
@@ -207,9 +256,14 @@ def _diff_id(diff: Dict[str, Any], idx: int) -> str:
     return f"{idx}:{sid_a}->{sid_b}"
 
 
-def merge_runtime_fields(store: ReviewStore, diffs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def merge_runtime_fields(
+    store: ReviewStore,
+    diffs: List[Dict[str, Any]],
+    external_classifications: Optional[Dict[str, str]] = None,
+) -> List[Dict[str, Any]]:
     """Overlay persisted review/classification state onto raw diff payload."""
 
+    external_classifications = external_classifications or {}
     enriched: List[Dict[str, Any]] = []
     for idx, diff in enumerate(diffs):
         item = dict(diff)
@@ -229,7 +283,18 @@ def merge_runtime_fields(store: ReviewStore, diffs: List[Dict[str, Any]]) -> Lis
             item["change_classification"] = classification["classification"]
             item["classification_source"] = classification.get("source")
         else:
-            item["classification_source"] = "diff_payload" if item.get("change_classification") else None
+            if not item.get("change_classification"):
+                sid_b = item.get("section_id_b")
+                sid_a = item.get("section_id_a")
+                label = None
+                if sid_b and sid_b in external_classifications:
+                    label = external_classifications[sid_b]
+                elif sid_a and sid_a in external_classifications:
+                    label = external_classifications[sid_a]
+                if label:
+                    item["change_classification"] = label
+                    item["classification_source"] = "classified_report"
+            item["classification_source"] = "diff_payload" if item.get("change_classification") and not item.get("classification_source") else item.get("classification_source")
 
         enriched.append(item)
     return enriched
@@ -255,6 +320,7 @@ def create_app(diff_path: Path = DEFAULT_DIFF_PATH, db_path: Path = DB_PATH) -> 
     context = DiffContext(path=resolved_diff_path, report=load_report(resolved_diff_path))
     store = ReviewStore(resolved_db_path)
     reports_dir = context.path.parent
+    external_classifications, external_source = discover_external_classifications(context.path)
 
     @app.get("/", response_class=HTMLResponse)
     async def index(request: Request) -> HTMLResponse:
@@ -270,13 +336,18 @@ def create_app(diff_path: Path = DEFAULT_DIFF_PATH, db_path: Path = DB_PATH) -> 
 
     @app.get("/api/diffs")
     async def get_diffs() -> Dict[str, Any]:
-        diffs = merge_runtime_fields(store, context.report.get("diffs", []))
+        diffs = merge_runtime_fields(
+            store,
+            context.report.get("diffs", []),
+            external_classifications=external_classifications,
+        )
         return {
             "pdf_a": context.report.get("pdf_a"),
             "pdf_b": context.report.get("pdf_b"),
             "summary": context.report.get("summary", {}),
             "diffs": diffs,
             "diff_file": context.path.name,
+            "external_classification_file": external_source.name if external_source else None,
         }
 
     @app.get("/api/reports")
@@ -324,14 +395,33 @@ def create_app(diff_path: Path = DEFAULT_DIFF_PATH, db_path: Path = DB_PATH) -> 
 
     @app.post("/api/reload")
     async def reload_report(payload: Optional[ReloadRequest] = None) -> Dict[str, Any]:
+        nonlocal external_classifications, external_source
         requested = payload.path if payload else None
         context.path = resolve_report_path(reports_dir, requested, context.path)
         context.report = load_report(context.path)
+        external_classifications, external_source = discover_external_classifications(context.path)
         return {
             "ok": True,
             "diff_file": context.path.name,
+            "external_classification_file": external_source.name if external_source else None,
             "summary": context.report.get("summary", {}),
             "count": len(context.report.get("diffs", [])),
+        }
+
+    @app.post("/api/classifications/import")
+    async def import_external_classifications(payload: Optional[ClassificationImportRequest] = None) -> Dict[str, Any]:
+        nonlocal external_classifications, external_source
+        requested = payload.path if payload and payload.path else None
+        if requested:
+            candidate = resolve_report_path(reports_dir, requested, context.path)
+            external_classifications = load_external_classifications(candidate)
+            external_source = candidate if external_classifications else None
+        else:
+            external_classifications, external_source = discover_external_classifications(context.path)
+        return {
+            "ok": True,
+            "loaded": len(external_classifications),
+            "source": external_source.name if external_source else None,
         }
 
     return app
