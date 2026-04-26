@@ -1,0 +1,2 @@
+# Optional dependencies for Unstructured extraction backend
+unstructured[pdf]>=0.15.0

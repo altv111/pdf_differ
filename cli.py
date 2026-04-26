@@ -40,6 +40,7 @@ def _add_common_flags(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--mode", choices=["primary-semantic", "numeric-primary"], default="primary-semantic")
     parser.add_argument("--header-pattern", action="append", default=[])
     parser.add_argument("--footer-pattern", action="append", default=[])
+    parser.add_argument("--extractor", choices=["pymupdf", "unstructured"], default="pymupdf")
     parser.add_argument("--debug", action="store_true")
     parser.add_argument("--dump-intermediate", action="store_true")
 
@@ -65,7 +66,7 @@ def run_extract(args: argparse.Namespace) -> Dict[str, Any]:
     """Execute extraction pipeline and return JSON-serializable payload."""
 
     cfg = build_config(args)
-    extraction = extract_pdf_lines(args.input_pdf, cfg)
+    extraction = extract_pdf_lines(args.input_pdf, cfg, extractor_backend=args.extractor)
     doc = sectionize_lines(document=args.input_pdf, lines=extraction.lines, config=cfg)
 
     output = to_dict(doc)
@@ -78,10 +79,15 @@ def run_extract(args: argparse.Namespace) -> Dict[str, Any]:
     return output
 
 
-def _extract_sections(pdf_path: str, cfg: HeuristicConfig, dump_intermediate: bool = False) -> tuple[DocumentSections, Dict[str, Any]]:
+def _extract_sections(
+    pdf_path: str,
+    cfg: HeuristicConfig,
+    dump_intermediate: bool = False,
+    extractor_backend: str = "pymupdf",
+) -> tuple[DocumentSections, Dict[str, Any]]:
     """Extract cleaned sections for one PDF plus optional intermediate diagnostics."""
 
-    extraction = extract_pdf_lines(pdf_path, cfg)
+    extraction = extract_pdf_lines(pdf_path, cfg, extractor_backend=extractor_backend)
     doc = sectionize_lines(document=pdf_path, lines=extraction.lines, config=cfg)
     intermediate: Dict[str, Any] = {}
     if dump_intermediate:
@@ -97,8 +103,8 @@ def run_diff(args: argparse.Namespace) -> Dict[str, Any]:
     """Execute end-to-end diff pipeline and return JSON-serializable report."""
 
     cfg = build_config(args)
-    doc_a, ia = _extract_sections(args.pdf_a, cfg, args.dump_intermediate)
-    doc_b, ib = _extract_sections(args.pdf_b, cfg, args.dump_intermediate)
+    doc_a, ia = _extract_sections(args.pdf_a, cfg, args.dump_intermediate, extractor_backend=args.extractor)
+    doc_b, ib = _extract_sections(args.pdf_b, cfg, args.dump_intermediate, extractor_backend=args.extractor)
 
     matches = SectionMatcher(cfg).match(doc_a.sections, doc_b.sections)
     report = SectionDiffer().build_report(doc_a, doc_b, matches)

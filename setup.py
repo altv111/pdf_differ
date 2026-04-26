@@ -17,9 +17,16 @@ setup(
         "models",
         "utils",
         "extractor",
+        "unstructured_extractor",
         "sectionizer",
         "matcher",
         "differ",
+        "classifier",
+        "llm_client",
+        "classify_report",
+        "compare_extractors",
+        "export_table",
+        "import_classifications",
         "viewer_backend",
     ],
     install_requires=[
@@ -31,11 +38,13 @@ setup(
     ],
     extras_require={
         "dev": ["pytest>=8.0.0"],
+        "unstructured": ["unstructured[pdf]>=0.15.0"],
     },
     entry_points={
         "console_scripts": [
             "pdf-semantic-diff=cli:main",
             "pdf-diff-viewer=viewer_backend:main",
+            "pdf-compare-extractors=compare_extractors:main",
         ]
     },
     include_package_data=True,

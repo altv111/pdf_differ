@@ -66,6 +66,7 @@ python cli.py diff old.pdf new.pdf --output diff.json
 ### Optional flags
 
 - `--mode primary-semantic|numeric-primary`
+- `--extractor pymupdf|unstructured`
 - `--header-pattern "..."` (repeatable)
 - `--footer-pattern "..."` (repeatable)
 - `--debug`
@@ -76,6 +77,45 @@ Examples:
 ```bash
 python cli.py extract d591.pdf --output d591_sections.json --dump-intermediate
 python cli.py diff d591.pdf d595.pdf --output d591_d595_diff.json --mode primary-semantic --debug
+python cli.py diff d591.pdf d595.pdf --output d591_d595_diff_unstructured.json --extractor unstructured --mode primary-semantic
+```
+
+## Optional Unstructured Backend
+
+For A/B extraction experiments, an optional `unstructured` backend is available.
+
+Install optional dependencies:
+
+```bash
+pip install "unstructured[pdf]"
+# or
+pip install -r requirements-unstructured.txt
+```
+
+Then run with:
+
+```bash
+python cli.py diff d591.pdf d595.pdf --output d591_d595_diff_unstructured.json --extractor unstructured
+```
+
+Notes:
+
+- `pymupdf` remains the default and recommended production backend.
+- If unstructured cannot provide reliable element coordinates, automatic positional
+  header/footer detection is disabled for safety (manual/footer regex still works).
+
+### A/B Comparison Utility
+
+Run both backends side-by-side and print timing + quality indicators:
+
+```bash
+python compare_extractors.py d591.pdf d595.pdf --mode primary-semantic --output extractor_comparison.json
+```
+
+Equivalent console script (after install):
+
+```bash
+pdf-compare-extractors d591.pdf d595.pdf --output extractor_comparison.json
 ```
 
 ## Tabular Export (CSV / Excel)

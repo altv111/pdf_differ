@@ -6,7 +6,7 @@ import logging
 import re
 from collections import Counter
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Sequence, Tuple
+from typing import Dict, List, Tuple
 
 from models import ExtractedLine, HeuristicConfig
 from utils import (
@@ -186,37 +186,13 @@ class PDFExtractor:
             page_lines[page_num] = lines
             LOGGER.debug("Extracted %d lines from page %d", len(lines), page_num)
 
-        removable = self.detector.detect(page_lines=page_lines, page_heights=page_heights)
-        manual_header = [re.compile(p, flags=re.IGNORECASE) for p in self.config.header_patterns]
-        manual_footer = [re.compile(p, flags=re.IGNORECASE) for p in self.config.footer_patterns]
-
-        clean_lines: List[ExtractedLine] = []
-        removed_lines: List[ExtractedLine] = []
-
-        for page, lines in page_lines.items():
-            for line in lines:
-                stripped = collapse_ws(line.text)
-                if not stripped:
-                    continue
-
-                auto_remove = (page, stripped) in removable
-                manual_remove = any(r.search(stripped) for r in manual_header + manual_footer)
-                page_num_only = is_page_number_only(stripped)
-                noise = line_is_likely_noise(stripped, self.config.ignore_patterns)
-
-                if auto_remove or manual_remove or page_num_only or noise:
-                    line.is_header_footer = True
-                    removed_lines.append(line)
-                else:
-                    clean_lines.append(line)
-
-        debug = {
-            "total_pages": len(page_lines),
-            "total_lines": sum(len(v) for v in page_lines.values()),
-            "removed_lines": len(removed_lines),
-            "remaining_lines": len(clean_lines),
-        }
-        return ExtractionResult(lines=clean_lines, removed_header_footer_lines=removed_lines, debug=debug)
+        return clean_extracted_lines(
+            page_lines=page_lines,
+            page_heights=page_heights,
+            config=self.config,
+            enable_auto_header_footer=True,
+            backend="pymupdf",
+        )
 
     def _extract_page_lines(self, page, page_num: int) -> List[ExtractedLine]:
         """Reconstruct reading-order lines by grouping nearby spans by y-position."""
@@ -300,8 +276,78 @@ class PDFExtractor:
 def extract_pdf_lines(
     pdf_path: str,
     config: HeuristicConfig,
+    extractor_backend: str = "pymupdf",
 ) -> ExtractionResult:
-    """Convenience wrapper for one-shot PDF extraction."""
+    """Convenience wrapper for one-shot PDF extraction.
 
-    extractor = PDFExtractor(config=config)
-    return extractor.extract(pdf_path)
+    Backends:
+    - `pymupdf` (default): layout-aware span extraction with coordinates.
+    - `unstructured`: element-based extraction for A/B evaluation.
+    """
+
+    backend = (extractor_backend or "pymupdf").strip().lower()
+    if backend == "pymupdf":
+        extractor = PDFExtractor(config=config)
+        return extractor.extract(pdf_path)
+    if backend == "unstructured":
+        from unstructured_extractor import extract_with_unstructured
+
+        page_lines, page_heights, backend_debug, has_reliable_positions = extract_with_unstructured(pdf_path)
+        result = clean_extracted_lines(
+            page_lines=page_lines,
+            page_heights=page_heights,
+            config=config,
+            enable_auto_header_footer=has_reliable_positions,
+            backend="unstructured",
+        )
+        result.debug["backend_debug"] = backend_debug
+        return result
+    raise ValueError(f"Unsupported extractor backend: {extractor_backend}")
+
+
+def clean_extracted_lines(
+    page_lines: Dict[int, List[ExtractedLine]],
+    page_heights: Dict[int, float],
+    config: HeuristicConfig,
+    enable_auto_header_footer: bool,
+    backend: str,
+) -> ExtractionResult:
+    """Apply shared cleanup passes on raw extracted lines."""
+
+    detector = HeaderFooterDetector(config)
+    removable: set[Tuple[int, str]] = set()
+    if enable_auto_header_footer:
+        removable = detector.detect(page_lines=page_lines, page_heights=page_heights)
+
+    manual_header = [re.compile(p, flags=re.IGNORECASE) for p in config.header_patterns]
+    manual_footer = [re.compile(p, flags=re.IGNORECASE) for p in config.footer_patterns]
+
+    clean_lines: List[ExtractedLine] = []
+    removed_lines: List[ExtractedLine] = []
+
+    for page, lines in page_lines.items():
+        for line in lines:
+            stripped = collapse_ws(line.text)
+            if not stripped:
+                continue
+
+            auto_remove = (page, stripped) in removable
+            manual_remove = any(r.search(stripped) for r in manual_header + manual_footer)
+            page_num_only = is_page_number_only(stripped)
+            noise = line_is_likely_noise(stripped, config.ignore_patterns)
+
+            if auto_remove or manual_remove or page_num_only or noise:
+                line.is_header_footer = True
+                removed_lines.append(line)
+            else:
+                clean_lines.append(line)
+
+    debug = {
+        "backend": backend,
+        "auto_header_footer_enabled": enable_auto_header_footer,
+        "total_pages": len(page_lines),
+        "total_lines": sum(len(v) for v in page_lines.values()),
+        "removed_lines": len(removed_lines),
+        "remaining_lines": len(clean_lines),
+    }
+    return ExtractionResult(lines=clean_lines, removed_header_footer_lines=removed_lines, debug=debug)
